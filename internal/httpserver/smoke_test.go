@@ -23,14 +23,14 @@ func buildTestRouter(t *testing.T) http.Handler {
 	// are not exercised. ValidateJWT uses only jwtSecret.
 	adm := admin.NewHandler(
 		nil, nil, nil, nil, nil, nil,
-		"test-master-key", "test-jwt-secret",
-		time.Hour, log,
+		"test-master-key", "test-jwt-secret-that-is-long-enough",
+		time.Hour, "", log,
 	)
 
 	// publicapi.Handler: nil stores / relay are fine for routes not exercised.
 	pub := publicapi.NewHandler(nil, nil, nil)
 
-	return httpserver.NewRouter(nil, pub, adm, []string{"*"}, log)
+	return httpserver.NewRouter(nil, pub, adm, []string{"*"}, 4*1024*1024, log)
 }
 
 // ─── /health ─────────────────────────────────────────────────────────────────

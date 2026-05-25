@@ -82,10 +82,10 @@ func main() {
 	pubHandler := publicapi.NewHandler(relaySvc, modelStore, usageStore)
 	admHandler := admin.NewHandler(
 		adminStore, provStore, modelStore, apiKeyStore, usageStore, auditStore,
-		cfg.MasterKey, cfg.JWTSecret, cfg.JWTExpiry, log,
+		cfg.MasterKey, cfg.JWTSecret, cfg.JWTExpiry, cfg.AdminBootstrap, log,
 	)
 
-	router := httpserver.NewRouter(relaySvc, pubHandler, admHandler, strings.Split(cfg.CORSOrigins, ","), log)
+	router := httpserver.NewRouter(relaySvc, pubHandler, admHandler, strings.Split(cfg.CORSOrigins, ","), cfg.MaxRequestBodyBytes, log)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

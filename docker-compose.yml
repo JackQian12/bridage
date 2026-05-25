@@ -34,7 +34,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       LISTEN_ADDR: 0.0.0.0:8080
       LOG_LEVEL: info
-      CORS_ORIGINS: "*"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     env_file:
       - .env
 

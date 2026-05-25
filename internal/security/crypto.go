@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/hkdf"
 )
 
 const (
@@ -52,10 +53,10 @@ func HashAPIKeyFast(plaintext string) string {
 }
 
 // EncryptSecret encrypts a plaintext secret with AES-256-GCM using masterKey.
-// masterKey must be at least 32 bytes; only the first 32 are used.
-// Returns a base64-encoded ciphertext prefixed with the nonce.
+// masterKey must be at least 32 bytes; HKDF-SHA256 is used to derive the AES key.
+// Returns a "v2:"-prefixed base64-encoded ciphertext for forward compatibility.
 func EncryptSecret(masterKey, plaintext string) (string, error) {
-	key := deriveKey(masterKey)
+	key := deriveKeyHKDF(masterKey)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("encrypt secret: %w", err)
@@ -69,16 +70,24 @@ func EncryptSecret(masterKey, plaintext string) (string, error) {
 		return "", fmt.Errorf("encrypt secret nonce: %w", err)
 	}
 	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return "v2:" + base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
 // DecryptSecret reverses EncryptSecret.
+// Supports both v2 (HKDF) and legacy (SHA-256) ciphertexts for migration compatibility.
 func DecryptSecret(masterKey, encoded string) (string, error) {
+	var key []byte
+	if strings.HasPrefix(encoded, "v2:") {
+		key = deriveKeyHKDF(masterKey)
+		encoded = encoded[3:]
+	} else {
+		// Legacy SHA-256 derivation — kept for migrating old records.
+		key = deriveKeySHA256(masterKey)
+	}
 	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", fmt.Errorf("decrypt secret: decode: %w", err)
 	}
-	key := deriveKey(masterKey)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("decrypt secret: %w", err)
@@ -98,8 +107,20 @@ func DecryptSecret(masterKey, encoded string) (string, error) {
 	return string(plain), nil
 }
 
-// deriveKey returns a 32-byte AES key derived from an arbitrary-length master key.
-func deriveKey(masterKey string) []byte {
+// deriveKeyHKDF returns a 32-byte AES key derived from masterKey using HKDF-SHA256.
+// This is the current (v2) key derivation method.
+func deriveKeyHKDF(masterKey string) []byte {
+	r := hkdf.New(sha256.New, []byte(strings.TrimSpace(masterKey)), nil, []byte("bridage-aes-gcm-v1"))
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(r, key); err != nil {
+		panic("hkdf derive key: " + err.Error())
+	}
+	return key
+}
+
+// deriveKeySHA256 is the legacy (v1) derivation kept only for decrypting
+// secrets that were encrypted before the HKDF upgrade. Do not use for new encryptions.
+func deriveKeySHA256(masterKey string) []byte {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(masterKey)))
 	return sum[:]
 }

@@ -16,8 +16,8 @@ type Config struct {
 	// Database
 	DatabaseURL string
 	// Security
-	MasterKey      string // 32-byte hex; used to encrypt upstream provider secrets
-	AdminBootstrap string // one-time token for first admin creation
+	MasterKey      string // ≥32-char secret; HKDF-derived to AES-256 key
+	AdminBootstrap string // one-time token for first admin creation via HTTP endpoint
 	// JWT
 	JWTSecret string
 	JWTExpiry time.Duration
@@ -28,6 +28,8 @@ type Config struct {
 	// Provider defaults
 	ProviderTimeout time.Duration
 	ProviderRetries int
+	// Request body limit (bytes). Default 4 MiB.
+	MaxRequestBodyBytes int64
 	// Environment
 	Env string
 }
@@ -66,8 +68,17 @@ func Load() (*Config, error) {
 	}
 	cfg.ProviderRetries = retries
 
+	maxBodyMB, err := strconv.ParseInt(getEnvOr("MAX_REQUEST_BODY_MB", "4"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid MAX_REQUEST_BODY_MB: %w", err)
+	}
+	cfg.MaxRequestBodyBytes = maxBodyMB * 1024 * 1024
+
 	if len(cfg.MasterKey) < 32 {
 		return nil, fmt.Errorf("MASTER_KEY must be at least 32 characters")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
 
 	return cfg, nil

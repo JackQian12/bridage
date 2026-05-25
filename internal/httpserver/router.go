@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,7 @@ func NewRouter(
 	pub *publicapi.Handler,
 	adm *admin.Handler,
 	corsOrigins []string,
+	maxBodyBytes int64,
 	log *zap.Logger,
 ) *gin.Engine {
 	r := gin.New()
@@ -28,6 +30,8 @@ func NewRouter(
 	r.Use(requestID())
 	r.Use(ginZapLogger(log))
 	r.Use(gin.Recovery())
+	r.Use(securityHeaders())
+	r.Use(bodyLimit(maxBodyBytes))
 	r.Use(corsMiddleware(corsOrigins))
 
 	// ── Public unauthenticated ──────────────────────────────────────────────
@@ -35,9 +39,10 @@ func NewRouter(
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Admin bootstrap (only works if no admin exists)
+	// Admin bootstrap (only works if no admin exists; requires X-Bootstrap-Token)
 	r.POST("/admin/bootstrap", adm.BootstrapAdmin)
-	r.POST("/admin/login", adm.Login)
+	// Login with per-IP rate limiting
+	r.POST("/admin/login", loginRateLimit(), adm.Login)
 
 	// ── Admin authenticated routes ─────────────────────────────────────────
 	adminGroup := r.Group("/admin")
@@ -161,7 +166,100 @@ func ginZapLogger(log *zap.Logger) gin.HandlerFunc {
 			zap.Int("status", c.Writer.Status()),
 			zap.Duration("latency", time.Since(start)),
 			zap.String("request_id", c.GetString("request_id")),
+			// Authorization header intentionally omitted to prevent credential leakage.
 		)
+	}
+}
+
+// securityHeaders adds defensive HTTP response headers to every response.
+func securityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		// X-XSS-Protection is legacy; modern browsers use CSP.
+		// Setting to "0" disables buggy browser XSS auditors.
+		c.Header("X-XSS-Protection", "0")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		// Strict-Transport-Security should only be set when TLS is active.
+		// Uncomment and configure via a HSTS_ENABLED env var in production.
+		// c.Header("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+		c.Next()
+	}
+}
+
+// bodyLimit rejects requests whose body exceeds maxBytes, protecting against
+// resource-exhaustion (DoS) via oversized payloads.
+func bodyLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.ContentLength > maxBytes {
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error": "request body too large",
+			})
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
+// ─── Login rate limiter ────────────────────────────────────────────────────────
+
+const (
+	loginMaxAttempts = 10
+	loginWindow      = 10 * time.Minute
+)
+
+type loginBucket struct {
+	count   int
+	resetAt time.Time
+}
+
+var (
+	loginBuckets   = make(map[string]*loginBucket)
+	loginBucketsMu sync.Mutex
+)
+
+// loginRateLimit enforces a per-IP sliding-window limit on /admin/login.
+// Exceeding loginMaxAttempts within loginWindow returns 429.
+func loginRateLimit() gin.HandlerFunc {
+	// Background cleanup of expired buckets.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			now := time.Now()
+			loginBucketsMu.Lock()
+			for ip, b := range loginBuckets {
+				if now.After(b.resetAt) {
+					delete(loginBuckets, ip)
+				}
+			}
+			loginBucketsMu.Unlock()
+		}
+	}()
+
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		now := time.Now()
+
+		loginBucketsMu.Lock()
+		b, ok := loginBuckets[ip]
+		if !ok || now.After(b.resetAt) {
+			loginBuckets[ip] = &loginBucket{count: 1, resetAt: now.Add(loginWindow)}
+			loginBucketsMu.Unlock()
+			c.Next()
+			return
+		}
+		if b.count >= loginMaxAttempts {
+			loginBucketsMu.Unlock()
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": "too many login attempts, please try again later",
+			})
+			return
+		}
+		b.count++
+		loginBucketsMu.Unlock()
+		c.Next()
 	}
 }
 

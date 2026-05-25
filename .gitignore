@@ -1,0 +1,23 @@
+# Environment variables - NEVER commit real credentials
+.env
+.env.local
+.env.*.local
+
+# Binary output
+/bridage-server
+/bridagectl
+*.exe
+
+# Go build artifacts
+/dist/
+/bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

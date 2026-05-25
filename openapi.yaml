@@ -1,0 +1,858 @@
+openapi: "3.0.3"
+info:
+  title: Bridage API
+  version: "1.0.0"
+  description: |
+    **Bridage** is a server-side API-key relay proxy. It wraps upstream LLM provider
+    API keys, generates downstream `brg_`-prefixed keys, and exposes an
+    OpenAI-compatible `/v1` surface.
+
+    ## Authentication
+
+    | Scope | Mechanism |
+    |-------|-----------|
+    | Admin endpoints (`/admin/*`) | JWT Bearer token obtained from `POST /admin/login` |
+    | Relay endpoints (`/v1/*`) | `brg_`-prefixed downstream key as Bearer token |
+
+servers:
+  - url: "http://localhost:8080"
+    description: Local development
+
+# ─── Security schemes ─────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    AdminJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT issued by POST /admin/login. Pass as `Authorization: Bearer <token>`."
+
+    BridageKey:
+      type: http
+      scheme: bearer
+      description: "Downstream `brg_` key. Pass as `Authorization: Bearer brg_...`."
+
+  # ─── Reusable schemas ────────────────────────────────────────────────────
+  schemas:
+
+    # ── Provider ──────────────────────────────────────────────────────────
+    ProviderCapabilities:
+      type: object
+      properties:
+        chat:        { type: boolean }
+        responses:   { type: boolean }
+        embeddings:  { type: boolean }
+        images:      { type: boolean }
+        streaming:   { type: boolean }
+
+    Provider:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        name:          { type: string, example: "my-openai" }
+        display_name:  { type: string, example: "My OpenAI" }
+        adapter_type:
+          type: string
+          enum: [openai_compatible, anthropic, gemini]
+        base_url:      { type: string, format: uri, example: "https://api.openai.com" }
+        auth_header:   { type: string, example: "Authorization" }
+        auth_scheme:   { type: string, example: "Bearer" }
+        enabled:       { type: boolean }
+        capabilities:  { $ref: "#/components/schemas/ProviderCapabilities" }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+      # Note: encrypted_api_key is never returned (json:"-").
+
+    ProviderCreate:
+      type: object
+      required: [name, display_name, base_url, api_key]
+      properties:
+        name:          { type: string, example: "my-openai" }
+        display_name:  { type: string, example: "My OpenAI" }
+        adapter_type:
+          type: string
+          enum: [openai_compatible, anthropic, gemini]
+          default: openai_compatible
+        base_url:      { type: string, format: uri }
+        auth_header:   { type: string, example: "Authorization" }
+        auth_scheme:   { type: string, example: "Bearer" }
+        api_key:       { type: string, description: "Upstream provider API key (stored encrypted)." }
+        enabled:       { type: boolean, default: true }
+        capabilities:  { $ref: "#/components/schemas/ProviderCapabilities" }
+
+    ProviderUpdate:
+      type: object
+      description: "All fields are optional; omit to keep the current value."
+      properties:
+        display_name:  { type: string }
+        adapter_type:  { type: string, enum: [openai_compatible, anthropic, gemini] }
+        base_url:      { type: string, format: uri }
+        auth_header:   { type: string }
+        auth_scheme:   { type: string }
+        api_key:       { type: string, description: "Supply only to rotate the upstream API key." }
+        enabled:       { type: boolean }
+        capabilities:  { $ref: "#/components/schemas/ProviderCapabilities" }
+
+    # ── Model ─────────────────────────────────────────────────────────────
+    Model:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        provider_id:     { type: string, format: uuid }
+        name:            { type: string, example: "gpt-4o" }
+        provider_model:  { type: string, example: "gpt-4o-2024-11-20" }
+        description:     { type: string }
+        enabled:         { type: boolean }
+        supports_images: { type: boolean }
+        context_window:  { type: integer, example: 128000 }
+        created_at:      { type: string, format: date-time }
+        updated_at:      { type: string, format: date-time }
+
+    ModelCreate:
+      type: object
+      required: [provider_id, name, provider_model]
+      properties:
+        provider_id:     { type: string, format: uuid }
+        name:            { type: string, example: "gpt-4o" }
+        provider_model:  { type: string, example: "gpt-4o-2024-11-20" }
+        description:     { type: string }
+        enabled:         { type: boolean, default: true }
+        supports_images: { type: boolean, default: false }
+        context_window:  { type: integer, example: 128000 }
+
+    ModelUpdate:
+      type: object
+      properties:
+        name:            { type: string }
+        provider_model:  { type: string }
+        description:     { type: string }
+        enabled:         { type: boolean }
+        supports_images: { type: boolean }
+        context_window:  { type: integer }
+
+    # ── API Key ───────────────────────────────────────────────────────────
+    APIKey:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        name:            { type: string, example: "My App Key" }
+        status:
+          type: string
+          enum: [active, disabled, exhausted]
+        provider_id:     { type: string, format: uuid, description: "Pinned provider UUID; absent = any enabled provider." }
+        rate_limit:      { type: integer, description: "Max requests per minute (0 = unlimited)." }
+        quota_tokens:    { type: integer, description: "Lifetime token quota (0 = unlimited)." }
+        used_tokens:     { type: integer }
+        quota_requests:  { type: integer, description: "Lifetime request quota (0 = unlimited)." }
+        used_requests:   { type: integer }
+        expires_at:      { type: string, format: date-time, nullable: true }
+        created_at:      { type: string, format: date-time }
+        updated_at:      { type: string, format: date-time }
+      # Note: key_hash and key_index are never returned (json:"-").
+
+    APIKeyCreate:
+      type: object
+      required: [name]
+      properties:
+        name:            { type: string, example: "My App Key" }
+        provider_id:     { type: string, format: uuid, description: "Pin to a specific provider (optional)." }
+        rate_limit:      { type: integer, default: 0 }
+        quota_tokens:    { type: integer, default: 0 }
+        quota_requests:  { type: integer, default: 0 }
+        expires_at:      { type: string, format: date-time, nullable: true }
+
+    APIKeyCreateResponse:
+      type: object
+      properties:
+        key:
+          type: string
+          description: "The plaintext `brg_` key. **This is the only time it is returned.**"
+          example: "brg_abc123..."
+        record:
+          $ref: "#/components/schemas/APIKey"
+
+    APIKeyUpdate:
+      type: object
+      properties:
+        name:            { type: string }
+        status:          { type: string, enum: [active, disabled] }
+        provider_id:     { type: string, format: uuid, nullable: true }
+        rate_limit:      { type: integer }
+        quota_tokens:    { type: integer }
+        quota_requests:  { type: integer }
+        expires_at:      { type: string, format: date-time, nullable: true }
+
+    # ── Usage Log ─────────────────────────────────────────────────────────
+    UsageLog:
+      type: object
+      properties:
+        id:                 { type: string, format: uuid }
+        api_key_id:         { type: string, format: uuid }
+        endpoint:           { type: string, example: "/v1/chat/completions" }
+        model:              { type: string, example: "gpt-4o" }
+        prompt_tokens:      { type: integer }
+        completion_tokens:  { type: integer }
+        total_tokens:       { type: integer }
+        status_code:        { type: integer }
+        duration_ms:        { type: integer }
+        error:              { type: string, nullable: true }
+        created_at:         { type: string, format: date-time }
+
+    UsageLogList:
+      type: object
+      properties:
+        object: { type: string, example: "list" }
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/UsageLog" }
+
+    # ── Preset ────────────────────────────────────────────────────────────
+    PresetModel:
+      type: object
+      properties:
+        name:            { type: string }
+        provider_model:  { type: string }
+        description:     { type: string }
+        context_window:  { type: integer }
+        supports_images: { type: boolean }
+
+    Preset:
+      type: object
+      properties:
+        slug:            { type: string, example: "openai" }
+        display_name:    { type: string, example: "OpenAI" }
+        adapter_type:    { type: string }
+        base_url:        { type: string, format: uri }
+        auth_header:     { type: string }
+        auth_scheme:     { type: string }
+        capabilities:    { $ref: "#/components/schemas/ProviderCapabilities" }
+        default_models:
+          type: array
+          items: { $ref: "#/components/schemas/PresetModel" }
+
+    # ── Admin user bootstrap ──────────────────────────────────────────────
+    BootstrapAdminRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: "admin" }
+        password: { type: string, example: "changeme" }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+
+    LoginResponse:
+      type: object
+      properties:
+        token:      { type: string, description: "JWT for subsequent admin calls." }
+        expires_at: { type: string, format: date-time }
+
+    BootstrapPresetRequest:
+      type: object
+      required: [api_key]
+      properties:
+        api_key: { type: string, description: "Upstream provider API key." }
+        enabled: { type: boolean, default: true }
+
+    # ── OpenAI-compat /v1 schemas ─────────────────────────────────────────
+    OAIModelObject:
+      type: object
+      properties:
+        id:       { type: string, example: "gpt-4o" }
+        object:   { type: string, example: "model" }
+        created:  { type: integer, description: "Unix timestamp." }
+        owned_by: { type: string, example: "openai" }
+
+    OAIModelList:
+      type: object
+      properties:
+        object: { type: string, example: "list" }
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/OAIModelObject" }
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: object }
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:       { type: string, example: "gpt-4o" }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/ChatMessage" }
+        stream:      { type: boolean, default: false }
+        temperature: { type: number, minimum: 0, maximum: 2 }
+        max_tokens:  { type: integer }
+        top_p:       { type: number }
+        n:           { type: integer }
+
+    EmbeddingsRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model: { type: string }
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+
+    ImagesRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt: { type: string }
+        model:  { type: string, example: "dall-e-3" }
+        n:      { type: integer, default: 1 }
+        size:   { type: string, example: "1024x1024" }
+
+    # ── Generic error ─────────────────────────────────────────────────────
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Health ─────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      tags: [Health]
+      responses:
+        "200":
+          description: Server is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ok" }
+
+  # ── Admin bootstrap & login ────────────────────────────────────────────────
+  /admin/bootstrap:
+    post:
+      summary: Create the initial admin account
+      description: "Only succeeds when no admin users exist. Call once during first-run setup."
+      operationId: bootstrapAdmin
+      tags: [Admin / Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BootstrapAdminRequest" }
+      responses:
+        "201":
+          description: Admin account created.
+        "409":
+          description: An admin already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/login:
+    post:
+      summary: Admin login — obtain JWT
+      operationId: adminLogin
+      tags: [Admin / Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: JWT issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ── Admin — Presets ────────────────────────────────────────────────────────
+  /admin/presets:
+    get:
+      summary: List all built-in presets
+      operationId: listPresets
+      tags: [Admin / Presets]
+      security: [{ AdminJWT: [] }]
+      responses:
+        "200":
+          description: Array of preset definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Preset" }
+        "401": { description: Unauthorized. }
+
+  /admin/presets/{slug}/bootstrap:
+    post:
+      summary: Bootstrap a provider from a preset
+      description: "Creates the provider (with your API key) and all default models defined in the preset."
+      operationId: bootstrapPreset
+      tags: [Admin / Presets]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, example: "openai" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BootstrapPresetRequest" }
+      responses:
+        "201":
+          description: Provider and models created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "400": { description: Missing or invalid API key. }
+        "401": { description: Unauthorized. }
+        "404": { description: Preset slug not found. }
+
+  # ── Admin — Providers ─────────────────────────────────────────────────────
+  /admin/providers:
+    get:
+      summary: List all providers
+      operationId: listProviders
+      tags: [Admin / Providers]
+      security: [{ AdminJWT: [] }]
+      responses:
+        "200":
+          description: Array of providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Provider" }
+        "401": { description: Unauthorized. }
+    post:
+      summary: Create a provider
+      operationId: createProvider
+      tags: [Admin / Providers]
+      security: [{ AdminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProviderCreate" }
+      responses:
+        "201":
+          description: Provider created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "400": { description: Validation error. }
+        "401": { description: Unauthorized. }
+
+  /admin/providers/{id}:
+    get:
+      summary: Get a provider by ID
+      operationId: getProvider
+      tags: [Admin / Providers]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Provider object.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+    put:
+      summary: Update a provider
+      operationId: updateProvider
+      tags: [Admin / Providers]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProviderUpdate" }
+      responses:
+        "200":
+          description: Updated provider.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+    delete:
+      summary: Delete a provider
+      operationId: deleteProvider
+      tags: [Admin / Providers]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+
+  # ── Admin — Models ────────────────────────────────────────────────────────
+  /admin/models:
+    get:
+      summary: List all models
+      operationId: listModels
+      tags: [Admin / Models]
+      security: [{ AdminJWT: [] }]
+      responses:
+        "200":
+          description: Array of models.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Model" }
+        "401": { description: Unauthorized. }
+    post:
+      summary: Create a model
+      operationId: createModel
+      tags: [Admin / Models]
+      security: [{ AdminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelCreate" }
+      responses:
+        "201":
+          description: Model created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Model" }
+        "400": { description: Validation error. }
+        "401": { description: Unauthorized. }
+
+  /admin/models/{id}:
+    get:
+      summary: Get a model by ID
+      operationId: getModel
+      tags: [Admin / Models]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Model object.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Model" }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+    put:
+      summary: Update a model
+      operationId: updateModel
+      tags: [Admin / Models]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelUpdate" }
+      responses:
+        "200":
+          description: Updated model.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Model" }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+    delete:
+      summary: Delete a model
+      operationId: deleteModel
+      tags: [Admin / Models]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+
+  # ── Admin — API Keys ──────────────────────────────────────────────────────
+  /admin/keys:
+    get:
+      summary: List all API keys
+      operationId: listAPIKeys
+      tags: [Admin / Keys]
+      security: [{ AdminJWT: [] }]
+      responses:
+        "200":
+          description: Array of API key records (plaintext key never returned).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/APIKey" }
+        "401": { description: Unauthorized. }
+    post:
+      summary: Create a downstream API key
+      operationId: createAPIKey
+      tags: [Admin / Keys]
+      security: [{ AdminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/APIKeyCreate" }
+      responses:
+        "201":
+          description: "Key created. The plaintext `brg_` key is returned **once only**."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKeyCreateResponse" }
+        "400": { description: Validation error. }
+        "401": { description: Unauthorized. }
+
+  /admin/keys/{id}:
+    get:
+      summary: Get an API key by ID
+      operationId: getAPIKey
+      tags: [Admin / Keys]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: API key record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKey" }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+    put:
+      summary: Update an API key
+      operationId: updateAPIKey
+      tags: [Admin / Keys]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/APIKeyUpdate" }
+      responses:
+        "200":
+          description: Updated API key record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKey" }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+    delete:
+      summary: Delete an API key
+      operationId: deleteAPIKey
+      tags: [Admin / Keys]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { description: Unauthorized. }
+        "404": { description: Not found. }
+
+  /admin/keys/{id}/usage:
+    get:
+      summary: Get recent usage logs for an API key
+      operationId: getKeyUsage
+      tags: [Admin / Keys]
+      security: [{ AdminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Array of usage log entries (most recent first, up to 100).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UsageLog" }
+        "401": { description: Unauthorized. }
+        "404": { description: Key not found. }
+
+  # ── /v1 relay endpoints ───────────────────────────────────────────────────
+  /v1/models:
+    get:
+      summary: List available models
+      description: Returns enabled models in OpenAI list format. Respects per-key model rules if set.
+      operationId: v1ListModels
+      tags: [Relay / Models]
+      security: [{ BridageKey: [] }]
+      responses:
+        "200":
+          description: Model list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAIModelList" }
+        "401": { description: Invalid or missing brg_ key. }
+
+  /v1/chat/completions:
+    post:
+      summary: Chat completions (OpenAI-compatible)
+      operationId: chatCompletions
+      tags: [Relay / Chat]
+      security: [{ BridageKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatCompletionRequest" }
+      responses:
+        "200":
+          description: "Chat completion response (or SSE stream when `stream: true`)."
+          content:
+            application/json:
+              schema: { type: object }
+            text/event-stream:
+              schema: { type: string }
+        "401": { description: Invalid or missing brg_ key. }
+        "429": { description: Rate limit or quota exceeded. }
+        "502": { description: Upstream provider error. }
+
+  /v1/responses:
+    post:
+      summary: Responses API (OpenAI Responses format)
+      operationId: responses
+      tags: [Relay / Chat]
+      security: [{ BridageKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: Response object from upstream. }
+        "401": { description: Unauthorized. }
+        "429": { description: Rate limit or quota exceeded. }
+
+  /v1/embeddings:
+    post:
+      summary: Embeddings (OpenAI-compatible)
+      operationId: embeddings
+      tags: [Relay / Embeddings]
+      security: [{ BridageKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmbeddingsRequest" }
+      responses:
+        "200": { description: Embeddings response from upstream. }
+        "401": { description: Unauthorized. }
+        "429": { description: Rate limit or quota exceeded. }
+
+  /v1/images/generations:
+    post:
+      summary: Image generation (OpenAI-compatible)
+      operationId: imageGenerations
+      tags: [Relay / Images]
+      security: [{ BridageKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImagesRequest" }
+      responses:
+        "200": { description: Image generation response from upstream. }
+        "401": { description: Unauthorized. }
+        "429": { description: Rate limit or quota exceeded. }
+
+  # ── /v1 account self-service ──────────────────────────────────────────────
+  /v1/account/key:
+    get:
+      summary: Get my key's metadata
+      description: Returns the metadata of the `brg_` key used for this request.
+      operationId: getAccountKey
+      tags: [Relay / Account]
+      security: [{ BridageKey: [] }]
+      responses:
+        "200":
+          description: Key metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:              { type: string, format: uuid }
+                  name:            { type: string }
+                  status:          { type: string }
+                  expires_at:      { type: string, format: date-time, nullable: true }
+                  rate_limit:      { type: integer }
+                  quota_tokens:    { type: integer }
+                  used_tokens:     { type: integer }
+                  quota_requests:  { type: integer }
+                  used_requests:   { type: integer }
+                  provider_id:     { type: string, format: uuid, nullable: true }
+                  created_at:      { type: string, format: date-time }
+        "401": { description: Unauthorized. }
+
+  /v1/account/usage:
+    get:
+      summary: Get my recent usage history
+      description: Returns the last 50 usage log entries for the authenticated key.
+      operationId: getAccountUsage
+      tags: [Relay / Account]
+      security: [{ BridageKey: [] }]
+      responses:
+        "200":
+          description: Usage log list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageLogList" }
+        "401": { description: Unauthorized. }
+
+tags:
+  - name: Health
+    description: Server health probe.
+  - name: Admin / Auth
+    description: Admin authentication and first-run bootstrap.
+  - name: Admin / Presets
+    description: Built-in provider presets for one-click setup.
+  - name: Admin / Providers
+    description: Upstream LLM provider management.
+  - name: Admin / Models
+    description: Model catalog management.
+  - name: Admin / Keys
+    description: Downstream `brg_` key management.
+  - name: Relay / Models
+    description: OpenAI-compatible model listing.
+  - name: Relay / Chat
+    description: Chat completions relay.
+  - name: Relay / Embeddings
+    description: Embeddings relay.
+  - name: Relay / Images
+    description: Image generation relay.
+  - name: Relay / Account
+    description: Key owner self-service endpoints.

@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bridage Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .mono { font-family: 'Courier New', monospace; }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-900 antialiased">
+
+<div x-data="app" x-init="init()" x-cloak class="min-h-screen">
+
+  <!-- ═══ LOGIN ═══════════════════════════════════════════════════════════════ -->
+  <div x-show="!token" class="flex min-h-screen items-center justify-center">
+    <div class="w-96 bg-white rounded-2xl shadow-lg p-8">
+      <div class="text-center mb-8">
+        <div class="w-12 h-12 bg-blue-600 rounded-xl mx-auto mb-3 flex items-center justify-center">
+          <span class="text-white text-xl font-bold">B</span>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-800">Bridage Admin</h1>
+        <p class="text-slate-500 text-sm mt-1">API Key Relay Manager</p>
+      </div>
+      <form @submit.prevent="login()">
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Username</label>
+          <input x-model="loginForm.username" type="text" required autocomplete="username"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="admin" />
+        </div>
+        <div class="mb-5">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+          <input x-model="loginForm.password" type="password" required autocomplete="current-password"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="••••••••" />
+        </div>
+        <p x-show="loginErr" x-text="loginErr" class="text-red-500 text-sm mb-4 -mt-2"></p>
+        <button type="submit" :disabled="loading"
+          class="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg py-2.5 transition-colors">
+          <span x-text="loading ? 'Signing in…' : 'Sign In'"></span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══ MAIN APP ════════════════════════════════════════════════════════════ -->
+  <div x-show="token" class="flex min-h-screen">
+
+    <!-- Sidebar -->
+    <aside class="w-56 bg-slate-900 text-white flex flex-col shrink-0 min-h-screen">
+      <div class="px-5 py-5 border-b border-slate-700">
+        <h1 class="text-base font-bold text-white">Bridage</h1>
+        <p class="text-xs text-slate-400 mt-0.5">Admin Panel</p>
+      </div>
+      <nav class="flex-1 py-4 px-3 space-y-0.5">
+        <template x-for="n in navItems" :key="n.id">
+          <button @click="switchSection(n.id)"
+            :class="section === n.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'"
+            class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+            <span x-text="n.label"></span>
+          </button>
+        </template>
+      </nav>
+      <div class="px-4 py-4 border-t border-slate-700">
+        <button @click="logout()" class="text-xs text-slate-400 hover:text-white transition-colors">Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Top bar -->
+      <header class="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-slate-800" x-text="navItems.find(n=>n.id===section)?.label ?? ''"></h2>
+        <button x-show="section !== 'presets'" @click="openAdd()"
+          class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          + Add
+        </button>
+      </header>
+
+      <!-- Banner -->
+      <div x-show="banner.msg" :class="banner.type==='error' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'"
+        class="border-b px-6 py-2 flex items-center justify-between">
+        <span class="text-sm" x-text="banner.msg"></span>
+        <button @click="banner.msg=''" class="text-xs opacity-60 hover:opacity-100">✕</button>
+      </div>
+
+      <!-- Content area -->
+      <main class="flex-1 overflow-auto p-6">
+
+        <!-- ── PROVIDERS ─────────────────────────────────────────────────── -->
+        <div x-show="section === 'providers'">
+          <div x-show="providers.length === 0" class="text-center py-16 text-slate-400">
+            <p class="text-lg">No providers yet.</p>
+            <p class="text-sm mt-1">Use the <button @click="switchSection('presets')" class="text-blue-600 underline">Presets</button> tab to quickly add a provider.</p>
+          </div>
+          <div x-show="providers.length > 0" class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Name</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Adapter</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Base URL</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Enabled</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Caps</th>
+                  <th class="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <template x-for="p in providers" :key="p.id">
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 font-medium" x-text="p.display_name"></td>
+                    <td class="px-4 py-3 text-slate-500 mono text-xs" x-text="p.adapter_type"></td>
+                    <td class="px-4 py-3 text-slate-500 text-xs truncate max-w-xs" x-text="p.base_url"></td>
+                    <td class="px-4 py-3">
+                      <span :class="p.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'"
+                        class="text-xs px-2 py-0.5 rounded-full font-medium" x-text="p.enabled ? 'On' : 'Off'"></span>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-slate-400">
+                      <span x-text="capsList(p.capabilities)"></span>
+                    </td>
+                    <td class="px-4 py-3 flex items-center gap-2 justify-end">
+                      <button @click="openEdit('providers', p)"
+                        class="text-blue-600 hover:text-blue-800 text-xs font-medium">Edit</button>
+                      <button @click="deleteItem('providers', p.id, 'provider')"
+                        class="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── MODELS ────────────────────────────────────────────────────── -->
+        <div x-show="section === 'models'">
+          <div x-show="models.length === 0" class="text-center py-16 text-slate-400">
+            <p class="text-lg">No models yet.</p>
+            <p class="text-sm mt-1">Models are created automatically when bootstrapping a preset, or add one manually.</p>
+          </div>
+          <div x-show="models.length > 0" class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Name</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Provider Model</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Provider</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Context</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Enabled</th>
+                  <th class="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <template x-for="m in models" :key="m.id">
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 font-medium mono text-xs" x-text="m.name"></td>
+                    <td class="px-4 py-3 text-slate-500 mono text-xs" x-text="m.provider_model"></td>
+                    <td class="px-4 py-3 text-slate-500 text-xs" x-text="providerName(m.provider_id)"></td>
+                    <td class="px-4 py-3 text-slate-500 text-xs" x-text="m.context_window ? m.context_window.toLocaleString() : '—'"></td>
+                    <td class="px-4 py-3">
+                      <span :class="m.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'"
+                        class="text-xs px-2 py-0.5 rounded-full font-medium" x-text="m.enabled ? 'On' : 'Off'"></span>
+                    </td>
+                    <td class="px-4 py-3 flex items-center gap-2 justify-end">
+                      <button @click="openEdit('models', m)"
+                        class="text-blue-600 hover:text-blue-800 text-xs font-medium">Edit</button>
+                      <button @click="deleteItem('models', m.id, 'model')"
+                        class="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── API KEYS ──────────────────────────────────────────────────── -->
+        <div x-show="section === 'keys'">
+          <!-- New key reveal banner -->
+          <div x-show="newKey" class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4">
+            <p class="text-sm font-medium text-amber-800 mb-1">⚠ Copy this key now — it will never be shown again.</p>
+            <code class="block bg-white border border-amber-200 rounded px-3 py-2 text-sm mono break-all" x-text="newKey"></code>
+            <button @click="newKey=null" class="mt-2 text-xs text-amber-700 underline">Dismiss</button>
+          </div>
+          <div x-show="keys.length === 0" class="text-center py-16 text-slate-400">
+            <p class="text-lg">No API keys yet.</p>
+            <p class="text-sm mt-1">Click "+ Add" to create a downstream API key.</p>
+          </div>
+          <div x-show="keys.length > 0" class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Name</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Status</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Tokens Used / Quota</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Reqs Used / Quota</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Rate Limit</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Expires</th>
+                  <th class="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <template x-for="k in keys" :key="k.id">
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 font-medium" x-text="k.name"></td>
+                    <td class="px-4 py-3">
+                      <span :class="statusClass(k.status)" class="text-xs px-2 py-0.5 rounded-full font-medium" x-text="k.status"></span>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-slate-500">
+                      <span x-text="k.used_tokens.toLocaleString()"></span>
+                      <span x-show="k.quota_tokens > 0"> / <span x-text="k.quota_tokens.toLocaleString()"></span></span>
+                      <span x-show="k.quota_tokens === 0" class="text-slate-400"> / ∞</span>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-slate-500">
+                      <span x-text="k.used_requests.toLocaleString()"></span>
+                      <span x-show="k.quota_requests > 0"> / <span x-text="k.quota_requests.toLocaleString()"></span></span>
+                      <span x-show="k.quota_requests === 0" class="text-slate-400"> / ∞</span>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-slate-500" x-text="k.rate_limit > 0 ? k.rate_limit+'/min' : '∞'"></td>
+                    <td class="px-4 py-3 text-xs text-slate-500" x-text="k.expires_at ? new Date(k.expires_at).toLocaleDateString() : '—'"></td>
+                    <td class="px-4 py-3 flex items-center gap-2 justify-end">
+                      <button @click="openEdit('keys', k)"
+                        class="text-blue-600 hover:text-blue-800 text-xs font-medium">Edit</button>
+                      <button @click="viewKeyUsage(k)"
+                        class="text-slate-500 hover:text-slate-700 text-xs font-medium">Usage</button>
+                      <button @click="deleteItem('keys', k.id, 'key')"
+                        class="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── PRESETS ───────────────────────────────────────────────────── -->
+        <div x-show="section === 'presets'">
+          <p class="text-sm text-slate-500 mb-4">Bootstrap a provider and its default models from a built-in preset. You'll need an API key from the provider.</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <template x-for="p in presets" :key="p.slug">
+              <div class="bg-white rounded-xl shadow-sm p-4 border border-gray-100">
+                <div class="flex items-start justify-between mb-2">
+                  <h3 class="font-semibold text-slate-800" x-text="p.display_name"></h3>
+                  <span class="text-xs text-slate-400 mono" x-text="p.adapter_type"></span>
+                </div>
+                <p class="text-xs text-slate-500 truncate mb-1" x-text="p.base_url"></p>
+                <p class="text-xs text-slate-400 mb-3" x-text="(p.default_models?.length ?? 0) + ' default models'"></p>
+                <div class="flex gap-2">
+                  <button @click="openBootstrap(p)"
+                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium py-1.5 rounded-lg transition-colors">
+                    Bootstrap
+                  </button>
+                  <button @click="showPresetModels(p)"
+                    class="text-slate-500 hover:text-slate-700 text-xs font-medium px-2 py-1.5 border border-gray-200 rounded-lg">
+                    Models
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══ MODALS ══════════════════════════════════════════════════════════════ -->
+
+  <!-- Backdrop -->
+  <div x-show="modal.open" @click.self="closeModal()"
+    class="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4">
+
+    <!-- ── Provider modal ── -->
+    <div x-show="modal.type === 'providers'"
+      class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto z-50">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-800" x-text="modal.editing ? 'Edit Provider' : 'Add Provider'"></h3>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+      <form @submit.prevent="saveProvider()" class="px-6 py-4 space-y-4">
+        <div x-show="!modal.editing">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Internal Name <span class="text-red-500">*</span></label>
+          <input x-model="pForm.name" type="text" required :disabled="!!modal.editing"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="my-openai" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Display Name <span class="text-red-500">*</span></label>
+          <input x-model="pForm.display_name" type="text" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="My OpenAI" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Adapter Type</label>
+          <select x-model="pForm.adapter_type"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="openai_compatible">OpenAI Compatible</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Base URL <span class="text-red-500">*</span></label>
+          <input x-model="pForm.base_url" type="url" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="https://api.openai.com" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Auth Header</label>
+            <input x-model="pForm.auth_header" type="text"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Authorization" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Auth Scheme</label>
+            <input x-model="pForm.auth_scheme" type="text"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Bearer" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">
+            API Key <span x-show="modal.editing" class="text-slate-400 font-normal">(leave blank to keep current)</span>
+            <span x-show="!modal.editing" class="text-red-500">*</span>
+          </label>
+          <input x-model="pForm.api_key" type="password" :required="!modal.editing"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="sk-..." />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-2">Capabilities</label>
+          <div class="flex flex-wrap gap-3">
+            <template x-for="cap in ['chat','responses','embeddings','images','streaming']" :key="cap">
+              <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="checkbox" x-model="pForm.capabilities[cap]" class="rounded" />
+                <span x-text="cap" class="capitalize"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="p-enabled" x-model="pForm.enabled" class="rounded" />
+          <label for="p-enabled" class="text-sm text-slate-700">Enabled</label>
+        </div>
+        <div class="flex gap-3 pt-2">
+          <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">
+            <span x-text="modal.editing ? 'Save Changes' : 'Create Provider'"></span>
+          </button>
+          <button type="button" @click="closeModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 border border-gray-200 rounded-lg">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── Model modal ── -->
+    <div x-show="modal.type === 'models'"
+      class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto z-50">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-800" x-text="modal.editing ? 'Edit Model' : 'Add Model'"></h3>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+      <form @submit.prevent="saveModel()" class="px-6 py-4 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Provider <span class="text-red-500">*</span></label>
+          <select x-model="mForm.provider_id" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">— Select provider —</option>
+            <template x-for="p in providers" :key="p.id">
+              <option :value="p.id" x-text="p.display_name"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Model Name (canonical) <span class="text-red-500">*</span></label>
+          <input x-model="mForm.name" type="text" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="gpt-4o" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Provider Model ID <span class="text-red-500">*</span></label>
+          <input x-model="mForm.provider_model" type="text" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="gpt-4o-2024-11-20" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
+          <input x-model="mForm.description" type="text"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Optional description" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Context Window</label>
+          <input x-model.number="mForm.context_window" type="number" min="0"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="128000" />
+        </div>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+            <input type="checkbox" x-model="mForm.enabled" class="rounded" />
+            <span>Enabled</span>
+          </label>
+          <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+            <input type="checkbox" x-model="mForm.supports_images" class="rounded" />
+            <span>Supports Images</span>
+          </label>
+        </div>
+        <div class="flex gap-3 pt-2">
+          <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">
+            <span x-text="modal.editing ? 'Save Changes' : 'Create Model'"></span>
+          </button>
+          <button type="button" @click="closeModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 border border-gray-200 rounded-lg">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── API Key modal ── -->
+    <div x-show="modal.type === 'keys'"
+      class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto z-50">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-800" x-text="modal.editing ? 'Edit API Key' : 'Create API Key'"></h3>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+      <form @submit.prevent="saveKey()" class="px-6 py-4 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Name <span class="text-red-500">*</span></label>
+          <input x-model="kForm.name" type="text" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="My App Key" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
+          <select x-model="kForm.status"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="active">Active</option>
+            <option value="disabled">Disabled</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Pinned Provider <span class="text-slate-400 font-normal">(optional, blank = any)</span></label>
+          <select x-model="kForm.provider_id"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">Any enabled provider</option>
+            <template x-for="p in providers" :key="p.id">
+              <option :value="p.id" x-text="p.display_name"></option>
+            </template>
+          </select>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Rate Limit (rpm)</label>
+            <input x-model.number="kForm.rate_limit" type="number" min="0"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="0 = ∞" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Token Quota</label>
+            <input x-model.number="kForm.quota_tokens" type="number" min="0"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="0 = ∞" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Request Quota</label>
+            <input x-model.number="kForm.quota_requests" type="number" min="0"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="0 = ∞" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Expires At <span class="text-slate-400 font-normal">(optional)</span></label>
+          <input x-model="kForm.expires_at" type="datetime-local"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div class="flex gap-3 pt-2">
+          <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">
+            <span x-text="modal.editing ? 'Save Changes' : 'Create Key'"></span>
+          </button>
+          <button type="button" @click="closeModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 border border-gray-200 rounded-lg">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── Bootstrap preset modal ── -->
+    <div x-show="modal.type === 'bootstrap'"
+      class="bg-white rounded-2xl shadow-xl w-full max-w-md z-50">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-800">Bootstrap <span x-text="bootstrapPreset?.display_name"></span></h3>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+      <form @submit.prevent="doBootstrap()" class="px-6 py-4 space-y-4">
+        <p class="text-sm text-slate-500">
+          This will create the provider and
+          <span x-text="bootstrapPreset?.default_models?.length ?? 0"></span> default models.
+        </p>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Provider API Key <span class="text-red-500">*</span></label>
+          <input x-model="bootstrapApiKey" type="password" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="sk-..." />
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="bs-enabled" x-model="bootstrapEnabled" class="rounded" />
+          <label for="bs-enabled" class="text-sm text-slate-700">Enable immediately</label>
+        </div>
+        <div class="flex gap-3 pt-1">
+          <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">Bootstrap</button>
+          <button type="button" @click="closeModal()" class="px-4 py-2 text-sm text-slate-600 border border-gray-200 rounded-lg">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── Preset models info modal ── -->
+    <div x-show="modal.type === 'preset-models'"
+      class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-y-auto z-50">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-800"><span x-text="bootstrapPreset?.display_name"></span> — Default Models</h3>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+      <div class="px-6 py-4">
+        <table class="w-full text-sm">
+          <thead><tr class="border-b border-gray-100">
+            <th class="text-left py-2 text-slate-600 font-medium">Name</th>
+            <th class="text-left py-2 text-slate-600 font-medium">Provider Model</th>
+            <th class="text-left py-2 text-slate-600 font-medium">Context</th>
+          </tr></thead>
+          <tbody class="divide-y divide-gray-50">
+            <template x-for="m in bootstrapPreset?.default_models ?? []" :key="m.name">
+              <tr>
+                <td class="py-2 mono text-xs" x-text="m.name"></td>
+                <td class="py-2 mono text-xs text-slate-500" x-text="m.provider_model"></td>
+                <td class="py-2 text-xs text-slate-500" x-text="m.context_window ? m.context_window.toLocaleString() : '—'"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Key usage modal ── -->
+    <div x-show="modal.type === 'key-usage'"
+      class="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[80vh] overflow-y-auto z-50">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-800">Usage — <span x-text="usageKey?.name"></span></h3>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+      <div class="px-6 py-4">
+        <div x-show="usageLogs.length === 0" class="text-center py-8 text-slate-400 text-sm">No usage records yet.</div>
+        <table x-show="usageLogs.length > 0" class="w-full text-xs">
+          <thead><tr class="border-b border-gray-100">
+            <th class="text-left py-2 text-slate-600 font-medium">Time</th>
+            <th class="text-left py-2 text-slate-600 font-medium">Endpoint</th>
+            <th class="text-right py-2 text-slate-600 font-medium">Tokens</th>
+            <th class="text-right py-2 text-slate-600 font-medium">Latency</th>
+            <th class="text-left py-2 text-slate-600 font-medium">Status</th>
+          </tr></thead>
+          <tbody class="divide-y divide-gray-50">
+            <template x-for="u in usageLogs" :key="u.id">
+              <tr>
+                <td class="py-1.5 text-slate-500" x-text="new Date(u.created_at).toLocaleString()"></td>
+                <td class="py-1.5 mono" x-text="u.endpoint"></td>
+                <td class="py-1.5 text-right" x-text="u.total_tokens"></td>
+                <td class="py-1.5 text-right text-slate-500" x-text="u.duration_ms + 'ms'"></td>
+                <td class="py-1.5">
+                  <span :class="u.status_code < 300 ? 'text-green-600' : 'text-red-500'" x-text="u.status_code"></span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /backdrop -->
+
+</div><!-- /app -->
+
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('app', () => ({
+    token: localStorage.getItem('admin_token'),
+    loading: false,
+    loginForm: { username: '', password: '' },
+    loginErr: '',
+    section: 'providers',
+    banner: { msg: '', type: 'ok' },
+    navItems: [
+      { id: 'providers', label: 'Providers' },
+      { id: 'models',    label: 'Models'    },
+      { id: 'keys',      label: 'API Keys'  },
+      { id: 'presets',   label: 'Presets'   },
+    ],
+
+    // ── data
+    providers: [], models: [], keys: [], presets: [],
+    newKey: null,
+    usageKey: null, usageLogs: [],
+
+    // ── modal
+    modal: { open: false, type: '', editing: null },
+    pForm: {}, mForm: {}, kForm: {},
+    bootstrapPreset: null, bootstrapApiKey: '', bootstrapEnabled: true,
+
+    // ─────────────────────────────────────────────
+    async init() {
+      if (this.token) await this.switchSection('providers')
+    },
+
+    async login() {
+      this.loading = true; this.loginErr = ''
+      try {
+        const r = await fetch('/admin/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.loginForm)
+        })
+        const d = await r.json()
+        if (r.ok && d.token) {
+          this.token = d.token
+          localStorage.setItem('admin_token', d.token)
+          await this.switchSection('providers')
+        } else {
+          this.loginErr = d.error || 'Login failed'
+        }
+      } catch (e) { this.loginErr = 'Network error' }
+      this.loading = false
+    },
+
+    logout() {
+      this.token = null; localStorage.removeItem('admin_token')
+    },
+
+    // ── API helper
+    async api(path, method = 'GET', body = null) {
+      const opts = { method, headers: { 'Authorization': 'Bearer ' + this.token } }
+      if (body !== null) {
+        opts.headers['Content-Type'] = 'application/json'
+        opts.body = JSON.stringify(body)
+      }
+      const r = await fetch(path, opts)
+      if (r.status === 401) { this.logout(); return null }
+      if (r.status === 204) return {}
+      return r.json()
+    },
+
+    showBanner(msg, type = 'ok') {
+      this.banner = { msg, type }
+      setTimeout(() => { if (this.banner.msg === msg) this.banner.msg = '' }, 4000)
+    },
+
+    // ── Sections
+    async switchSection(id) {
+      this.section = id
+      if (id === 'providers') await this.loadProviders()
+      else if (id === 'models') { await this.loadProviders(); await this.loadModels() }
+      else if (id === 'keys')  { await this.loadProviders(); await this.loadKeys() }
+      else if (id === 'presets') await this.loadPresets()
+    },
+
+    async loadProviders() {
+      const d = await this.api('/admin/providers'); this.providers = d?.data || []
+    },
+    async loadModels() {
+      const d = await this.api('/admin/models'); this.models = d?.data || []
+    },
+    async loadKeys() {
+      const d = await this.api('/admin/keys'); this.keys = d?.data || []
+    },
+    async loadPresets() {
+      const d = await this.api('/admin/presets'); this.presets = d?.data || []
+    },
+
+    // ── Generic open/close
+    openAdd() {
+      if (this.section === 'providers') {
+        this.pForm = { name: '', display_name: '', adapter_type: 'openai_compatible',
+          base_url: 'https://', auth_header: 'Authorization', auth_scheme: 'Bearer',
+          api_key: '', enabled: true,
+          capabilities: { chat: true, responses: false, embeddings: false, images: false, streaming: true } }
+        this.modal = { open: true, type: 'providers', editing: null }
+      } else if (this.section === 'models') {
+        this.mForm = { provider_id: this.providers[0]?.id ?? '', name: '', provider_model: '',
+          description: '', enabled: true, supports_images: false, context_window: 128000 }
+        this.modal = { open: true, type: 'models', editing: null }
+      } else if (this.section === 'keys') {
+        this.kForm = { name: '', status: 'active', provider_id: '', rate_limit: 0,
+          quota_tokens: 0, quota_requests: 0, expires_at: '' }
+        this.modal = { open: true, type: 'keys', editing: null }
+      }
+    },
+
+    openEdit(type, item) {
+      if (type === 'providers') {
+        this.pForm = { ...item, api_key: '',
+          capabilities: { ...item.capabilities } }
+        this.modal = { open: true, type: 'providers', editing: item }
+      } else if (type === 'models') {
+        this.mForm = { ...item }
+        this.modal = { open: true, type: 'models', editing: item }
+      } else if (type === 'keys') {
+        this.kForm = { ...item, provider_id: item.provider_id ?? '',
+          expires_at: item.expires_at ? new Date(item.expires_at).toISOString().slice(0,16) : '' }
+        this.modal = { open: true, type: 'keys', editing: item }
+      }
+    },
+
+    closeModal() { this.modal.open = false },
+
+    // ── Providers
+    async saveProvider() {
+      const body = { ...this.pForm }
+      if (this.modal.editing && !body.api_key) delete body.api_key
+      let r
+      if (this.modal.editing) {
+        r = await this.api('/admin/providers/' + this.modal.editing.id, 'PUT', body)
+      } else {
+        r = await this.api('/admin/providers', 'POST', body)
+      }
+      if (r && r.error) { this.showBanner(r.error, 'error'); return }
+      this.closeModal(); await this.loadProviders()
+      this.showBanner(this.modal.editing ? 'Provider updated.' : 'Provider created.')
+    },
+
+    // ── Models
+    async saveModel() {
+      let r
+      if (this.modal.editing) {
+        r = await this.api('/admin/models/' + this.modal.editing.id, 'PUT', this.mForm)
+      } else {
+        r = await this.api('/admin/models', 'POST', this.mForm)
+      }
+      if (r && r.error) { this.showBanner(r.error, 'error'); return }
+      this.closeModal(); await this.loadModels()
+      this.showBanner(this.modal.editing ? 'Model updated.' : 'Model created.')
+    },
+
+    // ── Keys
+    async saveKey() {
+      const body = { ...this.kForm }
+      if (!body.provider_id) delete body.provider_id
+      if (!body.expires_at) delete body.expires_at
+      else body.expires_at = new Date(body.expires_at).toISOString()
+      let r
+      if (this.modal.editing) {
+        r = await this.api('/admin/keys/' + this.modal.editing.id, 'PUT', body)
+        if (r && !r.error) { this.closeModal(); await this.loadKeys(); this.showBanner('Key updated.') }
+        else if (r?.error) this.showBanner(r.error, 'error')
+      } else {
+        r = await this.api('/admin/keys', 'POST', body)
+        if (r && r.key) {
+          this.newKey = r.key; this.closeModal(); await this.loadKeys()
+        } else if (r?.error) this.showBanner(r.error, 'error')
+      }
+    },
+
+    // ── Delete
+    async deleteItem(type, id, label) {
+      if (!confirm('Delete this ' + label + '? This cannot be undone.')) return
+      const path = type === 'providers' ? '/admin/providers/' + id
+                 : type === 'models'    ? '/admin/models/' + id
+                 : '/admin/keys/' + id
+      await this.api(path, 'DELETE')
+      if (type === 'providers') await this.loadProviders()
+      else if (type === 'models') await this.loadModels()
+      else await this.loadKeys()
+      this.showBanner(label.charAt(0).toUpperCase() + label.slice(1) + ' deleted.')
+    },
+
+    // ── Presets
+    openBootstrap(p) {
+      this.bootstrapPreset = p; this.bootstrapApiKey = ''; this.bootstrapEnabled = true
+      this.modal = { open: true, type: 'bootstrap', editing: null }
+    },
+    showPresetModels(p) {
+      this.bootstrapPreset = p
+      this.modal = { open: true, type: 'preset-models', editing: null }
+    },
+    async doBootstrap() {
+      const r = await this.api('/admin/presets/' + this.bootstrapPreset.slug + '/bootstrap',
+        'POST', { api_key: this.bootstrapApiKey, enabled: this.bootstrapEnabled })
+      if (r && r.error) { this.showBanner(r.error, 'error'); return }
+      this.closeModal()
+      this.showBanner(this.bootstrapPreset.display_name + ' bootstrapped successfully!')
+    },
+
+    // ── Key usage
+    async viewKeyUsage(k) {
+      this.usageKey = k; this.usageLogs = []
+      this.modal = { open: true, type: 'key-usage', editing: null }
+      const r = await this.api('/admin/keys/' + k.id + '/usage')
+      this.usageLogs = r || []
+    },
+
+    // ── Helpers
+    providerName(id) {
+      return this.providers.find(p => p.id === id)?.display_name ?? id?.slice(0,8) ?? '—'
+    },
+    capsList(c) {
+      if (!c) return ''
+      return Object.entries(c).filter(([,v]) => v).map(([k]) => k).join(' · ')
+    },
+    statusClass(s) {
+      return s === 'active' ? 'bg-green-100 text-green-700'
+           : s === 'disabled' ? 'bg-yellow-100 text-yellow-700'
+           : 'bg-red-100 text-red-700'
+    },
+  }))
+})
+</script>
+</body>
+</html>

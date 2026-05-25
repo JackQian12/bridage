@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bridage — My Account</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .mono { font-family: 'Courier New', monospace; }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-900 antialiased">
+
+<div x-data="app" x-init="init()" x-cloak class="min-h-screen">
+
+  <!-- ═══ LOGIN ═══════════════════════════════════════════════════════════════ -->
+  <div x-show="!apiKey" class="flex min-h-screen items-center justify-center">
+    <div class="w-96 bg-white rounded-2xl shadow-lg p-8">
+      <div class="text-center mb-8">
+        <div class="w-12 h-12 bg-emerald-600 rounded-xl mx-auto mb-3 flex items-center justify-center">
+          <span class="text-white text-xl font-bold">B</span>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-800">Bridage</h1>
+        <p class="text-slate-500 text-sm mt-1">My Account</p>
+      </div>
+      <form @submit.prevent="signIn()">
+        <div class="mb-5">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Your API Key</label>
+          <input x-model="inputKey" type="password" required autocomplete="off"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 mono text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            placeholder="brg_..." />
+          <p class="text-xs text-slate-400 mt-1">Keys start with <code class="mono">brg_</code></p>
+        </div>
+        <p x-show="loginErr" x-text="loginErr" class="text-red-500 text-sm mb-4 -mt-2"></p>
+        <button type="submit" :disabled="loading"
+          class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium rounded-lg py-2.5 transition-colors">
+          <span x-text="loading ? 'Verifying…' : 'Sign In'"></span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══ MAIN APP ════════════════════════════════════════════════════════════ -->
+  <div x-show="apiKey" class="flex min-h-screen">
+
+    <!-- Sidebar -->
+    <aside class="w-56 bg-slate-900 text-white flex flex-col shrink-0 min-h-screen">
+      <div class="px-5 py-5 border-b border-slate-700">
+        <h1 class="text-base font-bold text-white">Bridage</h1>
+        <p class="text-xs text-slate-400 mt-0.5">My Account</p>
+      </div>
+      <nav class="flex-1 py-4 px-3 space-y-0.5">
+        <template x-for="n in navItems" :key="n.id">
+          <button @click="section = n.id; loadSection(n.id)"
+            :class="section === n.id ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'"
+            class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+            <span x-text="n.label"></span>
+          </button>
+        </template>
+      </nav>
+      <div class="px-5 py-4 border-t border-slate-700">
+        <p class="text-xs text-slate-500 mb-2 truncate mono" x-text="keyName"></p>
+        <button @click="signOut()" class="text-xs text-slate-400 hover:text-white transition-colors">Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Top bar -->
+      <header class="bg-white border-b border-gray-200 px-6 py-4">
+        <h2 class="text-lg font-semibold text-slate-800" x-text="navItems.find(n=>n.id===section)?.label ?? ''"></h2>
+      </header>
+
+      <main class="flex-1 overflow-auto p-6">
+
+        <!-- ── OVERVIEW ──────────────────────────────────────────────────── -->
+        <div x-show="section === 'overview'">
+          <div x-show="!keyInfo" class="text-center py-16 text-slate-400 text-sm">Loading…</div>
+          <div x-show="keyInfo" class="space-y-6">
+
+            <!-- Key info card -->
+            <div class="bg-white rounded-xl shadow-sm p-6">
+              <h3 class="font-semibold text-slate-700 mb-4">Key Details</h3>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div>
+                  <p class="text-xs text-slate-400 uppercase tracking-wider">Name</p>
+                  <p class="font-medium mt-0.5" x-text="keyInfo?.name ?? '—'"></p>
+                </div>
+                <div>
+                  <p class="text-xs text-slate-400 uppercase tracking-wider">Status</p>
+                  <span :class="statusClass(keyInfo?.status)"
+                    class="inline-block text-xs px-2 py-0.5 rounded-full font-medium mt-0.5"
+                    x-text="keyInfo?.status ?? '—'"></span>
+                </div>
+                <div>
+                  <p class="text-xs text-slate-400 uppercase tracking-wider">Expires</p>
+                  <p class="font-medium mt-0.5"
+                    x-text="keyInfo?.expires_at ? new Date(keyInfo.expires_at).toLocaleDateString() : 'Never'"></p>
+                </div>
+                <div>
+                  <p class="text-xs text-slate-400 uppercase tracking-wider">Rate Limit</p>
+                  <p class="font-medium mt-0.5"
+                    x-text="keyInfo?.rate_limit > 0 ? keyInfo.rate_limit + ' req/min' : 'Unlimited'"></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quota bars -->
+            <div class="bg-white rounded-xl shadow-sm p-6">
+              <h3 class="font-semibold text-slate-700 mb-4">Usage Quotas</h3>
+              <div class="space-y-4">
+                <!-- Token quota -->
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span class="text-slate-600">Tokens</span>
+                    <span class="text-slate-500">
+                      <span x-text="(keyInfo?.used_tokens ?? 0).toLocaleString()"></span>
+                      /
+                      <span x-text="keyInfo?.quota_tokens > 0 ? keyInfo.quota_tokens.toLocaleString() : '∞'"></span>
+                    </span>
+                  </div>
+                  <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div class="h-full bg-emerald-500 rounded-full transition-all"
+                      :style="'width:' + tokenPct() + '%'"
+                      :class="tokenPct() > 90 ? 'bg-red-500' : tokenPct() > 70 ? 'bg-yellow-500' : 'bg-emerald-500'">
+                    </div>
+                  </div>
+                </div>
+                <!-- Request quota -->
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span class="text-slate-600">Requests</span>
+                    <span class="text-slate-500">
+                      <span x-text="(keyInfo?.used_requests ?? 0).toLocaleString()"></span>
+                      /
+                      <span x-text="keyInfo?.quota_requests > 0 ? keyInfo.quota_requests.toLocaleString() : '∞'"></span>
+                    </span>
+                  </div>
+                  <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div class="h-full rounded-full transition-all"
+                      :style="'width:' + reqPct() + '%'"
+                      :class="reqPct() > 90 ? 'bg-red-500' : reqPct() > 70 ? 'bg-yellow-500' : 'bg-emerald-500'">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Endpoint to use -->
+            <div class="bg-slate-900 rounded-xl p-5">
+              <p class="text-xs text-slate-400 uppercase tracking-wider mb-2">OpenAI-compatible endpoint</p>
+              <code class="mono text-emerald-400 text-sm" x-text="window.location.origin + '/v1'"></code>
+              <p class="text-xs text-slate-500 mt-2">Set this as your <code class="mono text-slate-300">OPENAI_BASE_URL</code> and use your <code class="mono text-slate-300">brg_</code> key as the API key.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── USAGE HISTORY ─────────────────────────────────────────────── -->
+        <div x-show="section === 'usage'">
+          <div x-show="usageLogs === null" class="text-center py-16 text-slate-400 text-sm">Loading…</div>
+          <div x-show="usageLogs !== null && usageLogs.length === 0" class="text-center py-16 text-slate-400">
+            <p class="text-lg">No usage yet.</p>
+            <p class="text-sm mt-1">Start making API calls to see your usage history here.</p>
+          </div>
+          <div x-show="usageLogs && usageLogs.length > 0" class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100 text-xs text-slate-400">Last 50 requests</div>
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Time</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Endpoint</th>
+                  <th class="text-right px-4 py-3 font-medium text-slate-600">Prompt</th>
+                  <th class="text-right px-4 py-3 font-medium text-slate-600">Completion</th>
+                  <th class="text-right px-4 py-3 font-medium text-slate-600">Total</th>
+                  <th class="text-right px-4 py-3 font-medium text-slate-600">Latency</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Status</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <template x-for="u in usageLogs" :key="u.id">
+                  <tr class="hover:bg-gray-50 text-sm">
+                    <td class="px-4 py-2.5 text-xs text-slate-500" x-text="new Date(u.created_at).toLocaleString()"></td>
+                    <td class="px-4 py-2.5 mono text-xs" x-text="u.endpoint"></td>
+                    <td class="px-4 py-2.5 text-right text-xs text-slate-600" x-text="u.prompt_tokens"></td>
+                    <td class="px-4 py-2.5 text-right text-xs text-slate-600" x-text="u.completion_tokens"></td>
+                    <td class="px-4 py-2.5 text-right text-xs font-medium" x-text="u.total_tokens"></td>
+                    <td class="px-4 py-2.5 text-right text-xs text-slate-500" x-text="u.duration_ms + 'ms'"></td>
+                    <td class="px-4 py-2.5">
+                      <span :class="u.status_code < 300 ? 'text-green-600' : 'text-red-500'"
+                        class="text-xs font-medium" x-text="u.status_code"></span>
+                      <span x-show="u.error" class="text-xs text-red-400 ml-1" x-text="u.error"></span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── AVAILABLE MODELS ──────────────────────────────────────────── -->
+        <div x-show="section === 'models'">
+          <div x-show="!availableModels" class="text-center py-16 text-slate-400 text-sm">Loading…</div>
+          <div x-show="availableModels && availableModels.length === 0" class="text-center py-16 text-slate-400">
+            <p class="text-lg">No models available.</p>
+            <p class="text-sm mt-1">Ask your administrator to enable some models.</p>
+          </div>
+          <div x-show="availableModels && availableModels.length > 0" class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Model ID</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Owned By</th>
+                  <th class="text-left px-4 py-3 font-medium text-slate-600">Created</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <template x-for="m in availableModels" :key="m.id">
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 mono text-sm font-medium" x-text="m.id"></td>
+                    <td class="px-4 py-3 text-xs text-slate-500" x-text="m.owned_by"></td>
+                    <td class="px-4 py-3 text-xs text-slate-500"
+                      x-text="new Date(m.created * 1000).toLocaleDateString()"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+</div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('app', () => ({
+    apiKey: localStorage.getItem('user_key'),
+    inputKey: '',
+    loading: false,
+    loginErr: '',
+    section: 'overview',
+    keyName: '',
+    keyInfo: null,
+    usageLogs: null,
+    availableModels: null,
+
+    navItems: [
+      { id: 'overview', label: 'Overview'         },
+      { id: 'usage',    label: 'Usage History'    },
+      { id: 'models',   label: 'Available Models' },
+    ],
+
+    async init() {
+      if (this.apiKey) await this.loadSection('overview')
+    },
+
+    async signIn() {
+      if (!this.inputKey.startsWith('brg_')) {
+        this.loginErr = 'Key must start with brg_'; return
+      }
+      this.loading = true; this.loginErr = ''
+      try {
+        const r = await fetch('/v1/account/key', {
+          headers: { 'Authorization': 'Bearer ' + this.inputKey }
+        })
+        if (r.ok) {
+          this.apiKey = this.inputKey
+          localStorage.setItem('user_key', this.inputKey)
+          const d = await r.json()
+          this.keyInfo = d; this.keyName = d.name
+        } else {
+          this.loginErr = 'Invalid key or key is disabled.'
+        }
+      } catch (e) { this.loginErr = 'Network error.' }
+      this.loading = false
+    },
+
+    signOut() {
+      this.apiKey = null; localStorage.removeItem('user_key')
+      this.keyInfo = null; this.usageLogs = null; this.availableModels = null
+    },
+
+    async api(path) {
+      const r = await fetch(path, { headers: { 'Authorization': 'Bearer ' + this.apiKey } })
+      if (r.status === 401) { this.signOut(); return null }
+      return r.json()
+    },
+
+    async loadSection(id) {
+      this.section = id
+      if (id === 'overview' && !this.keyInfo) {
+        const d = await this.api('/v1/account/key')
+        if (d) { this.keyInfo = d; this.keyName = d.name }
+      } else if (id === 'usage') {
+        const d = await this.api('/v1/account/usage')
+        this.usageLogs = d?.data ?? []
+      } else if (id === 'models') {
+        const d = await this.api('/v1/models')
+        this.availableModels = d?.data ?? []
+      }
+    },
+
+    tokenPct() {
+      if (!this.keyInfo || !this.keyInfo.quota_tokens) return 0
+      return Math.min(100, Math.round(this.keyInfo.used_tokens / this.keyInfo.quota_tokens * 100))
+    },
+    reqPct() {
+      if (!this.keyInfo || !this.keyInfo.quota_requests) return 0
+      return Math.min(100, Math.round(this.keyInfo.used_requests / this.keyInfo.quota_requests * 100))
+    },
+    statusClass(s) {
+      return s === 'active'   ? 'bg-green-100 text-green-700'
+           : s === 'disabled' ? 'bg-yellow-100 text-yellow-700'
+           : 'bg-red-100 text-red-700'
+    },
+  }))
+})
+</script>
+</body>
+</html>

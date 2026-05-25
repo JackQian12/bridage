@@ -1,64 +1,64 @@
-# 用户接入指南
+# User Integration Guide
 
-本文档面向使用 bridage 网关的终端用户。管理员会为你分配一个 `brg_` 开头的 API Key，按照本文档接入即可。
+This guide is for end users of the bridage gateway. Your administrator will provide you with a `brg_`-prefixed API key. Follow the steps below to get started.
 
 ---
 
-## 接入信息
+## Connection Details
 
-| 项目 | 值 |
+| Item | Value |
 |---|---|
-| **Base URL** | `http://<服务器地址>:8080/v1` |
-| **认证方式** | `Authorization: Bearer brg_你的密钥` |
-| **协议** | 与 OpenAI API 完全兼容 |
+| **Base URL** | `http://<server-address>:8080/v1` |
+| **Authentication** | `Authorization: Bearer brg_your-key` |
+| **Protocol** | Fully compatible with the OpenAI API |
 
-> 将 `<服务器地址>` 替换为管理员提供的实际地址。
+> Replace `<server-address>` with the actual address provided by your administrator.
 
 ---
 
-## 查看可用模型
+## List Available Models
 
 ```bash
-curl http://<服务器地址>:8080/v1/models \
-  -H "Authorization: Bearer brg_你的密钥"
+curl http://<server-address>:8080/v1/models \
+  -H "Authorization: Bearer brg_your-key"
 ```
 
 ---
 
-## 调用示例
+## Usage Examples
 
 ### curl
 
 ```bash
-curl http://<服务器地址>:8080/v1/chat/completions \
-  -H "Authorization: Bearer brg_你的密钥" \
+curl http://<server-address>:8080/v1/chat/completions \
+  -H "Authorization: Bearer brg_your-key" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "deepseek-chat",
     "messages": [
-      {"role": "user", "content": "你好！"}
+      {"role": "user", "content": "Hello!"}
     ]
   }'
 ```
 
-**流式输出（stream）：**
+**Streaming:**
 
 ```bash
-curl http://<服务器地址>:8080/v1/chat/completions \
-  -H "Authorization: Bearer brg_你的密钥" \
+curl http://<server-address>:8080/v1/chat/completions \
+  -H "Authorization: Bearer brg_your-key" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "deepseek-chat",
     "stream": true,
     "messages": [
-      {"role": "user", "content": "写一首短诗"}
+      {"role": "user", "content": "Write a short poem."}
     ]
   }'
 ```
 
 ---
 
-### Python（openai 库）
+### Python (openai library)
 
 ```bash
 pip install openai
@@ -68,27 +68,27 @@ pip install openai
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://<服务器地址>:8080/v1",
-    api_key="brg_你的密钥",
+    base_url="http://<server-address>:8080/v1",
+    api_key="brg_your-key",
 )
 
-# 普通调用
+# Standard call
 response = client.chat.completions.create(
     model="deepseek-chat",
     messages=[
-        {"role": "system", "content": "你是一个有帮助的助手。"},
-        {"role": "user", "content": "你好！"},
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello!"},
     ],
 )
 print(response.choices[0].message.content)
 ```
 
-**流式输出：**
+**Streaming:**
 
 ```python
 stream = client.chat.completions.create(
     model="deepseek-chat",
-    messages=[{"role": "user", "content": "讲个故事"}],
+    messages=[{"role": "user", "content": "Tell me a story."}],
     stream=True,
 )
 for chunk in stream:
@@ -98,7 +98,7 @@ for chunk in stream:
 
 ---
 
-### Node.js / TypeScript（openai 库）
+### Node.js / TypeScript (openai library)
 
 ```bash
 npm install openai
@@ -108,82 +108,82 @@ npm install openai
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "http://<服务器地址>:8080/v1",
-  apiKey: "brg_你的密钥",
+  baseURL: "http://<server-address>:8080/v1",
+  apiKey: "brg_your-key",
 });
 
 const response = await client.chat.completions.create({
   model: "deepseek-chat",
-  messages: [{ role: "user", content: "你好！" }],
+  messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(response.choices[0].message.content);
 ```
 
 ---
 
-### LangChain（Python）
+### LangChain (Python)
 
 ```python
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    base_url="http://<服务器地址>:8080/v1",
-    api_key="brg_你的密钥",
+    base_url="http://<server-address>:8080/v1",
+    api_key="brg_your-key",
     model="deepseek-chat",
 )
 
-result = llm.invoke("你好！")
+result = llm.invoke("Hello!")
 print(result.content)
 ```
 
 ---
 
-### 文本嵌入（Embeddings）
+### Embeddings
 
 ```python
 response = client.embeddings.create(
-    model="text-embedding-3-small",  # 使用管理员开放的嵌入模型
-    input="需要向量化的文本",
+    model="text-embedding-3-small",  # use a model enabled by your administrator
+    input="Text to embed",
 )
 print(response.data[0].embedding)
 ```
 
 ---
 
-## 查看账号与用量
+## Account & Usage
 
-**查看当前 Key 信息：**
+**Get current key info:**
 
 ```bash
-curl http://<服务器地址>:8080/v1/account/key \
-  -H "Authorization: Bearer brg_你的密钥"
+curl http://<server-address>:8080/v1/account/key \
+  -H "Authorization: Bearer brg_your-key"
 ```
 
-**查看用量统计：**
+**Get usage statistics:**
 
 ```bash
-curl http://<服务器地址>:8080/v1/account/usage \
-  -H "Authorization: Bearer brg_你的密钥"
+curl http://<server-address>:8080/v1/account/usage \
+  -H "Authorization: Bearer brg_your-key"
 ```
 
 ---
 
-## 常见问题
+## FAQ
 
-**Q: 报错 `401 Unauthorized`**
-- 检查 `Authorization` 头格式是否为 `Bearer brg_你的密钥`
-- 确认 Key 未过期且未被禁用，联系管理员确认
+**Q: I get `401 Unauthorized`**
+- Verify the `Authorization` header is formatted as `Bearer brg_your-key`
+- Confirm the key has not expired or been disabled — contact your administrator
 
-**Q: 报错 `403 Forbidden` 或提示模型不可用**
-- 你的 Key 可能未被授权使用该模型，联系管理员开通
+**Q: I get `403 Forbidden` or "model not available"**
+- Your key may not be authorized for that model — ask your administrator to enable access
 
-**Q: 报错 `429 Too Many Requests`**
-- 已触发速率限制（每分钟请求数上限），稍后重试或联系管理员调整配额
+**Q: I get `429 Too Many Requests`**
+- You have hit the rate limit (max requests per minute) — wait and retry, or ask your administrator to raise your quota
 
-**Q: 请求超时**
-- 复杂推理模型（如 `deepseek-reasoner`）响应较慢，建议开启流式输出（`stream: true`）或增大客户端超时时间
+**Q: Requests time out**
+- Complex reasoning models (e.g. `deepseek-reasoner`) can be slow — enable streaming (`stream: true`) or increase your client timeout
 
-**Q: 如何在 ChatBox / Cherry Studio / LobeChat 等客户端使用？**
-- 在客户端设置中，选择 `OpenAI` 兼容模式
-- Base URL 填写 `http://<服务器地址>:8080/v1`
-- API Key 填写 `brg_你的密钥`
+**Q: How do I use this with ChatBox / Cherry Studio / LobeChat?**
+- In the client settings, select **OpenAI compatible** mode
+- Set the Base URL to `http://<server-address>:8080/v1`
+- Set the API Key to `brg_your-key`
